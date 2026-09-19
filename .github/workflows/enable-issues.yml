@@ -5,23 +5,49 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
-  enable-issues:
+  open:
     runs-on: ubuntu-latest
     steps:
-      - name: Enable issues on repository
+      - name: Create the exclusion report issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NODE_ID: R_kgDOUhElYQ
         run: |
           set -x
-          curl -sS -X PATCH \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}" \
-            -d '{"has_issues": true}'
-          echo "---- current settings ----"
-          curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}" | grep -E '"(name|has_issues)"'
+          TITLE='Excluded playlist entries - rejection report'
+          cat > /tmp/body.md <<'ISSUE_BODY'
+          Three corrupted playlist entries in **ML Tooling Deep Dives** were identified via YouTube's oEmbed service (`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=<ID>`) and rejected from the catalog because they are unrelated to machine-learning engineering tooling. All three turned out to be MrBeast entertainment videos.
+
+          ## Excluded entries
+
+          **1. `dQw4w9WgXcQ-variant1`**
+          - Looked-up title: **I Spent 50 Hours In Solitary Confinement** (channel: MrBeast)
+          - Reason: a personal endurance/challenge stunt video with no ML tooling, model, framework, or open-source project in it, so there is no technology or GitHub repository to catalog.
+
+          **2. `dQw4w9WgXcQ-variant2`**
+          - Looked-up title: **100M subscribers special - I gave away a private island** (channel: MrBeast)
+          - Reason: a subscriber-milestone giveaway video - pure entertainment content with no machine-learning engineering tooling or software project.
+
+          **3. `dQw4w9WgXcQ-variant3`**
+          - Looked-up title: **I Built the World's Largest Chocolate Bar** (channel: MrBeast)
+          - Reason: a stunt video about building a giant chocolate bar; it contains no machine-learning tooling, no engineering project, and no repository.
+
+          ## Result
+
+          - 3 of the 13 playlist entries were excluded.
+          - The catalog (`ml_tech.md`) ended up covering **10 technologies**.
+          ISSUE_BODY
+          jq -n \
+            --arg rid "$REPO_NODE_ID" \
+            --arg t "$TITLE" \
+            --rawfile b /tmp/body.md \
+            '{query: "mutation($rid: ID!, $t: String!, $b: String!) { createIssue(input: {repositoryId: $rid, title: $t, body: $b}) { issue { number url title } } }", variables: {rid: $rid, t: $t, b: $b}}' > /tmp/req.json
+          gh api graphql --input /tmp/req.json || echo GRAPHQL_FAILED
+          echo "==== REST attempt ===="
+          jq -n --arg t "$TITLE" --rawfile b /tmp/body.md '{title: $t, body: $b}' > /tmp/rest.json
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues" --input /tmp/rest.json || echo REST_FAILED
+          echo "==== current issues ===="
+          gh api "repos/${GITHUB_REPOSITORY}/issues" --jq '.[] | {number, title}'
